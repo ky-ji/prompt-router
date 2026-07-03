@@ -9,13 +9,73 @@ from typing import Callable, Sequence
 
 OpenUrl = Callable[[urllib.request.Request, int], object]
 
+DEFAULT_LOCAL_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+DEFAULT_OPENAI_MODEL = "text-embedding-3-small"
+
+
+def default_model_for_provider(provider: str) -> str:
+    normalized = provider.lower()
+    if normalized == "local":
+        return DEFAULT_LOCAL_MODEL
+    if normalized == "openai":
+        return DEFAULT_OPENAI_MODEL
+    raise ValueError("provider must be 'local' or 'openai'.")
+
+
+class LocalEmbeddingClient:
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        model_loader: Callable[[str], object] | None = None,
+    ) -> None:
+        self.model = model or DEFAULT_LOCAL_MODEL
+        self._model_loader = model_loader or self._load_sentence_transformer
+        self._model = None
+
+    def _load_sentence_transformer(self, model: str) -> object:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as error:
+            raise RuntimeError(
+                "Local embeddings require sentence-transformers. "
+                'Install it with: pip install -e ".[local]"'
+            ) from error
+
+        return SentenceTransformer(model)
+
+    def _get_model(self) -> object:
+        if self._model is None:
+            try:
+                self._model = self._model_loader(self.model)
+            except ImportError as error:
+                raise RuntimeError(
+                    "Local embeddings require sentence-transformers. "
+                    'Install it with: pip install -e ".[local]"'
+                ) from error
+        return self._model
+
+    def embed_many(self, texts: Sequence[str]) -> list[list[float]]:
+        inputs = list(texts)
+        if not inputs:
+            return []
+
+        model = self._get_model()
+        raw_vectors = model.encode(inputs)
+        vectors = []
+        for vector in raw_vectors:
+            if hasattr(vector, "tolist"):
+                vector = vector.tolist()
+            vectors.append([float(value) for value in vector])
+        return vectors
+
 
 class OpenAIEmbeddingClient:
     def __init__(
         self,
         *,
         api_key: str | None = None,
-        model: str = "text-embedding-3-small",
+        model: str = DEFAULT_OPENAI_MODEL,
         dimensions: int | None = None,
         endpoint: str = "https://api.openai.com/v1/embeddings",
         timeout: int = 30,
@@ -83,3 +143,24 @@ class OpenAIEmbeddingClient:
             raise RuntimeError("Embedding response length did not match input length.")
 
         return vectors
+
+
+def create_embedding_client(
+    provider: str = "local",
+    *,
+    model: str | None = None,
+    dimensions: int | None = None,
+    model_loader: Callable[[str], object] | None = None,
+) -> LocalEmbeddingClient | OpenAIEmbeddingClient:
+    normalized = provider.lower()
+    resolved_model = model or default_model_for_provider(normalized)
+
+    if normalized == "local":
+        if dimensions is not None:
+            raise ValueError("dimensions is only supported for the openai provider.")
+        return LocalEmbeddingClient(model=resolved_model, model_loader=model_loader)
+
+    if normalized == "openai":
+        return OpenAIEmbeddingClient(model=resolved_model, dimensions=dimensions)
+
+    raise ValueError("provider must be 'local' or 'openai'.")

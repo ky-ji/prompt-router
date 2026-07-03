@@ -29,7 +29,9 @@ class IndexTests(unittest.TestCase):
         index = PromptIndex.from_library(
             PromptLibrary.from_prompts([summarize, translate]),
             embedder,
+            provider="local",
             model="fake-model",
+            source_hash="abc123",
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -38,8 +40,33 @@ class IndexTests(unittest.TestCase):
             loaded = PromptIndex.load_json(path)
 
         self.assertEqual(loaded.model, "fake-model")
+        self.assertEqual(loaded.provider, "local")
+        self.assertEqual(loaded.source_hash, "abc123")
+        self.assertIsNotNone(loaded.created_at)
         self.assertEqual([entry.prompt for entry in loaded.entries], [summarize, translate])
         self.assertEqual([entry.vector for entry in loaded.entries], [[1.0, 0.0], [0.0, 1.0]])
+
+    def test_loads_schema_v1_indexes_as_openai_indexes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "index.json"
+            path.write_text(
+                """
+                {
+                  "schema_version": 1,
+                  "model": "text-embedding-3-small",
+                  "entries": [
+                    {"prompt": "Summarize the text.", "vector": [1.0, 0.0]}
+                  ]
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            index = PromptIndex.load_json(path)
+
+        self.assertEqual(index.provider, "openai")
+        self.assertEqual(index.model, "text-embedding-3-small")
+        self.assertIsNone(index.source_hash)
 
     def test_router_from_index_only_embeds_query_at_match_time(self):
         summarize = "Summarize the following text into concise bullet points."

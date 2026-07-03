@@ -8,4 +8,5 @@ __pycache__/
 build/
 dist/
 prompt-index.json
+*.prompt-index.json
 .DS_Store

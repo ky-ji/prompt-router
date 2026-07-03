@@ -1,7 +1,12 @@
 import json
 import unittest
 
-from prompt_router.embedding import OpenAIEmbeddingClient
+from prompt_router.embedding import (
+    DEFAULT_LOCAL_MODEL,
+    LocalEmbeddingClient,
+    OpenAIEmbeddingClient,
+    create_embedding_client,
+)
 
 
 class FakeResponse:
@@ -61,6 +66,30 @@ class EmbeddingTests(unittest.TestCase):
                 "dimensions": 256,
             },
         )
+
+    def test_local_embedding_client_encodes_with_injected_model(self):
+        class FakeModel:
+            def encode(self, texts):
+                return [[float(len(text)), 1.0] for text in texts]
+
+        client = LocalEmbeddingClient(model_loader=lambda model: FakeModel())
+
+        self.assertEqual(client.model, DEFAULT_LOCAL_MODEL)
+        self.assertEqual(client.embed_many(["hi", "world"]), [[2.0, 1.0], [5.0, 1.0]])
+
+    def test_local_embedding_client_reports_missing_dependency(self):
+        def missing_dependency(model):
+            raise ImportError("no module named sentence_transformers")
+
+        client = LocalEmbeddingClient(model_loader=missing_dependency)
+
+        with self.assertRaisesRegex(RuntimeError, r"pip install -e .*\.\[local\]"):
+            client.embed_many(["hello"])
+
+    def test_create_embedding_client_defaults_to_local(self):
+        client = create_embedding_client(model_loader=lambda model: object())
+
+        self.assertIsInstance(client, LocalEmbeddingClient)
 
 
 if __name__ == "__main__":
